@@ -1,0 +1,9 @@
+name: astrbot-jm-sender
+description: 下载禁漫并以群消息转发的形式发送图片
+author: AstrBot User
+version: 1.0.0
+repository: 
+tags:
+  - jmcomic
+  - 漫画
+  - 转发 
