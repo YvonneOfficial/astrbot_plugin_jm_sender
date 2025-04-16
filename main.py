@@ -33,10 +33,11 @@ class JmSender(Star):
         # 初始化JM选项
         try:
             self.option = jmcomic.JmOption.from_file(self.option_path)
+            # logger.error(self.option.)
             # 创建JM客户端
             self.client = self.option.new_jm_client()
             logger.info(f"JM漫画插件初始化成功，下载目录: {self.download_dir}")
-            
+
             # 启动定时清理任务
             self._start_cleanup_scheduler()
         except Exception as e:
@@ -139,7 +140,7 @@ class JmSender(Star):
             # 按章节组织并发送图片
             for photo in all_photos:
                 # 使用async for来迭代异步生成器
-                async for message in self._send_photo_images(event, photo):
+                async for message in self._send_photo_images(event, photo,album_detail.name):
                     yield message
                 # 避免发送过快
                 await asyncio.sleep(1)
@@ -232,7 +233,7 @@ class JmSender(Star):
             logger.error(f"下载章节 {photo_id} 时出错: {e}")
             return None
     
-    async def _send_photo_images(self, event: AstrMessageEvent, photo):
+    async def _send_photo_images(self, event: AstrMessageEvent, photo, title):
         """以转发消息的形式发送章节的所有图片"""
         try:
             # 准备转发消息节点
@@ -263,16 +264,22 @@ class JmSender(Star):
             # 无论是私聊还是群聊，都使用转发消息
             # 构建转发消息节点
             nodes = []
+
+            # 获取平台信息
+            platform_name = event.get_platform_name()
+
             for i, img_file in enumerate(image_files):
                 img_path = os.path.join(photo_dir, img_file)
-                
-                # 获取平台信息
-                platform_name = event.get_platform_name()
-                
+
                 # 根据不同平台设置不同的发送者信息
                 if platform_name == "webchat":
                     # webchat平台使用字符串作为uin，使用Nodes可能不适用于webchat
                     # 尝试直接发送图片而不使用Node
+                    if i %29 ==0 :
+                        yield event.chain_result([
+                            Comp.Plain(title)
+                        ])
+
                     yield event.chain_result([
                         Comp.Plain(f"第 {i+1}/{len(image_files)} 页\n"),
                         Comp.Image.fromFileSystem(img_path)
@@ -292,6 +299,17 @@ class JmSender(Star):
                         self_id_int = 10000  # 使用一个安全的默认值
                     
                     # 添加到节点列表
+                    if i %29 ==0 :
+                        nodes.append(
+                            Comp.Node(
+                                name="AstrBot",
+                                uin=self_id_int,
+                                content=[
+                                    Comp.Plain(title)
+                                ]
+                            )
+                        )
+
                     nodes.append(
                         Comp.Node(
                             name="AstrBot",

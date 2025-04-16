@@ -49,6 +49,10 @@
 - 代理设置：`client.postman.meta_data.proxies`
 - 线程数：`download.threading`
 
+## 致谢
+
+感谢[yangjunyu200](https://github.com/yangjunyu200)对本项目的维护和支持！
+
 ## 许可证
 
 MIT 
