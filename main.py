@@ -369,7 +369,17 @@ class JmSender(Star):
             use_pdf = self._should_use_pdf(event)
             pdf_path = None
             if use_pdf:
-                pdf_path = self._create_pdf_from_images(photo_dir, image_files, chapter_title)
+                pdf_dir = os.path.join(self.download_dir, "pdf_exports")
+                existing_pdf = os.path.join(pdf_dir, f"{self._sanitize_filename(chapter_title)}.pdf")
+                if os.path.exists(existing_pdf):
+                    pdf_path = existing_pdf
+                else:
+                    pdf_path = await asyncio.to_thread(
+                        self._create_pdf_from_images,
+                        photo_dir,
+                        image_files,
+                        chapter_title
+                    )
                 if pdf_path:
                     pdf_component = self._build_pdf_component(pdf_path)
                     if pdf_component:
