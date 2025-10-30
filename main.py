@@ -140,7 +140,7 @@ class JmSender(Star):
             # 按章节组织并发送图片
             for photo in all_photos:
                 # 使用async for来迭代异步生成器
-                async for message in self._send_photo_images(event, photo,album_detail.name):
+                async for message in self._send_photo_images(event, photo, album_detail.name):
                     yield message
                 # 避免发送过快
                 await asyncio.sleep(1)
@@ -180,7 +180,7 @@ class JmSender(Star):
             ])
             
             # 发送章节图片，使用async for来迭代异步生成器
-            async for message in self._send_photo_images(event, photo):
+            async for message in self._send_photo_images(event, photo, photo.title):
                 yield message
                 
         except Exception as e:
@@ -233,9 +233,10 @@ class JmSender(Star):
             logger.error(f"下载章节 {photo_id} 时出错: {e}")
             return None
     
-    async def _send_photo_images(self, event: AstrMessageEvent, photo, title):
+    async def _send_photo_images(self, event: AstrMessageEvent, photo, title: Optional[str] = None):
         """以转发消息的形式发送章节的所有图片"""
         try:
+            chapter_title = title or getattr(photo, "title", "未命名章节")
             # 准备转发消息节点
             # 根据实际目录结构构建照片目录路径
             # 首先尝试预期的目录结构：album_id/photo_id
@@ -277,7 +278,7 @@ class JmSender(Star):
                     # 尝试直接发送图片而不使用Node
                     if i %29 ==0 :
                         yield event.chain_result([
-                            Comp.Plain(title)
+                            Comp.Plain(chapter_title)
                         ])
 
                     yield event.chain_result([
@@ -289,23 +290,25 @@ class JmSender(Star):
                     continue
                 else:
                     # 其他平台如QQ等使用转发消息
-                    # 获取self_id并确保它是整数
+                    # Extract a usable sender uin
                     self_id = event.get_self_id()
-                    try:
-                        self_id_int = int(self_id)  # 尝试转换为整数
-                    except (ValueError, TypeError):
-                        # 如果转换失败，使用默认值
-                        logger.warning(f"平台 {platform_name} 的self_id '{self_id}'无法转换为整数，使用默认值")
-                        self_id_int = 10000  # 使用一个安全的默认值
+                    uin_str = None
+                    if self_id is not None:
+                        digit_match = re.search(r'\d+', str(self_id))
+                        if digit_match:
+                            uin_str = digit_match.group(0)
+                    if not uin_str:
+                        uin_str = str(self_id or "0")
+                        logger.warning(f"Platform {platform_name} self_id '{self_id}' cannot be parsed as digits, using {uin_str} as fallback uin")
                     
                     # 添加到节点列表
                     if i %29 ==0 :
                         nodes.append(
                             Comp.Node(
                                 name="AstrBot",
-                                uin=self_id_int,
+                                uin=uin_str,
                                 content=[
-                                    Comp.Plain(title)
+                                    Comp.Plain(chapter_title)
                                 ]
                             )
                         )
@@ -313,7 +316,7 @@ class JmSender(Star):
                     nodes.append(
                         Comp.Node(
                             name="AstrBot",
-                            uin=self_id_int,
+                            uin=uin_str,
                             content=[
                                 Comp.Plain(f"第 {i+1}/{len(image_files)} 页\n"),
                                 Comp.Image.fromFileSystem(img_path)
