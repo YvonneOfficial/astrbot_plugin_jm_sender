@@ -1,2 +1,4 @@
 jmcomic
-browser_cookie3 
+browser_cookie3
+img2pdf
+Pillow

@@ -42,4 +42,10 @@ plugins:
     - plugin: skip_photo_with_few_images
       kwargs:
         at_least_image_count: 3
+
+  after_photo:
+    - plugin: img2pdf
+      kwargs:
+        pdf_dir: data/plugins/astrbot_plugin_jm_sender/data/jmcomic_files/pdf_exports
+        filename_rule: Ptitle
 version: '2.1' 

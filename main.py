@@ -7,6 +7,11 @@ import os
 import re
 import asyncio
 from typing import List, Optional
+import img2pdf
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 import aiohttp
 import shutil
 from collections import defaultdict
@@ -105,6 +110,103 @@ class JmSender(Star):
                 file_path = os.path.join(dirpath, filename)
                 total_size += os.path.getsize(file_path)
         return total_size
+
+    def _should_use_pdf(self, event: AstrMessageEvent) -> bool:
+        """判断是否使用PDF形式发送"""
+        platform_name = event.get_platform_name()
+        if platform_name != "aiocqhttp":
+            return False
+
+        # 尝试根据事件提供的接口判断是否为群聊
+        for attr in ("is_group", "is_group_message", "is_group_event"):
+            if hasattr(event, attr):
+                flag = getattr(event, attr)
+                if callable(flag):
+                    try:
+                        return bool(flag())
+                    except Exception:
+                        continue
+                return bool(flag)
+
+        # OneBot v11 兼容处理
+        for attr in ("message_type", "detail_type", "context_type"):
+            value = getattr(event, attr, None)
+            if isinstance(value, str) and value.lower() == "group":
+                return True
+
+        # 无法判断则默认走PDF，避免触发风控
+        return True
+
+    def _sanitize_filename(self, name: str) -> str:
+        """清理文件名中的非法字符"""
+        sanitized = re.sub(r'[\\\\/:*?"<>|]', "_", name)
+        sanitized = sanitized.strip() or "未命名章节"
+        return sanitized
+
+    def _create_pdf_from_images(self, photo_dir: str, image_files: List[str], chapter_title: str) -> Optional[str]:
+        """将章节图片合并为PDF并返回文件路径"""
+        try:
+            safe_title = self._sanitize_filename(chapter_title)
+            pdf_dir = os.path.join(self.download_dir, "pdf_exports")
+            os.makedirs(pdf_dir, exist_ok=True)
+            pdf_path = os.path.join(pdf_dir, f"{safe_title}.pdf")
+            img_paths = [os.path.join(photo_dir, f) for f in image_files]
+
+            with open(pdf_path, "wb") as pdf_fp:
+                pdf_fp.write(img2pdf.convert(img_paths))
+
+            return pdf_path
+        except Exception as primary_error:
+            logger.warning(f"img2pdf转换失败，尝试Pillow回退: {primary_error}")
+            if Image is None:
+                logger.error("未安装Pillow，无法进行PDF回退转换")
+                return None
+
+            try:
+                images = []
+                for img_path in img_paths:
+                    with Image.open(img_path) as img:
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        images.append(img.copy())
+
+                if not images:
+                    return None
+
+                images[0].save(pdf_path, save_all=True, append_images=images[1:])
+                for img in images:
+                    img.close()
+                return pdf_path
+            except Exception as fallback_error:
+                logger.error(f"使用Pillow合并PDF失败: {fallback_error}")
+                return None
+
+    def _build_pdf_component(self, pdf_path: str):
+        """根据运行环境生成PDF组件"""
+        if not os.path.exists(pdf_path):
+            return None
+
+        pdf_name = os.path.basename(pdf_path)
+
+        file_component = None
+        file_class = getattr(Comp, "File", None)
+        if file_class is not None:
+            builder = getattr(file_class, "fromFileSystem", None)
+            if callable(builder):
+                try:
+                    file_component = builder(pdf_path, name=pdf_name)
+                except Exception as e:
+                    logger.error(f"创建File组件失败: {e}")
+            else:
+                try:
+                    file_component = file_class(path=pdf_path, name=pdf_name)
+                except Exception as e:
+                    logger.error(f"实例化File组件失败: {e}")
+
+        if file_component is None:
+            logger.warning("无法找到可用的文件消息组件，PDF将不会发送")
+
+        return file_component
     
     @filter.command("jms")
     async def download_and_send(self, event: AstrMessageEvent):
@@ -262,12 +364,30 @@ class JmSender(Star):
             
             logger.info(f"在{photo_dir}中找到{len(image_files)}张图片")
             
+            # 获取平台信息并决定发送策略
+            platform_name = event.get_platform_name()
+            use_pdf = self._should_use_pdf(event)
+            pdf_path = None
+            if use_pdf:
+                pdf_path = self._create_pdf_from_images(photo_dir, image_files, chapter_title)
+                if pdf_path:
+                    pdf_component = self._build_pdf_component(pdf_path)
+                    if pdf_component:
+                        yield event.chain_result([
+                            Comp.Plain(f"章节《{chapter_title}》已打包为PDF，共{len(image_files)}页，请查收。"),
+                            pdf_component
+                        ])
+                        return
+                    else:
+                        logger.warning("生成PDF成功但无法构建消息组件，回退到普通转发发送")
+                else:
+                    logger.warning("生成PDF失败，将回退到普通转发发送")
+                # 若PDF生成失败，则继续使用原来的转发逻辑
+                use_pdf = False
+
             # 无论是私聊还是群聊，都使用转发消息
             # 构建转发消息节点
             nodes = []
-
-            # 获取平台信息
-            platform_name = event.get_platform_name()
 
             for i, img_file in enumerate(image_files):
                 img_path = os.path.join(photo_dir, img_file)
@@ -335,8 +455,8 @@ class JmSender(Star):
             
             # 如果是支持合并转发的平台且nodes不为空，则用合并转发发送
             if nodes:
-                # 每次最多发送30张图片，避免消息过大（部分平台限制更严格）
-                batch_size = 10 if platform_name == "aiocqhttp" else 30
+                # 每次最多发送30张图片，避免消息过大
+                batch_size = 30
                 for i in range(0, len(nodes), batch_size):
                     batch_nodes = nodes[i:i+batch_size]
                     if batch_nodes:
