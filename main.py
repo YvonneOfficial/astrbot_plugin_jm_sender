@@ -300,13 +300,22 @@ class JmSender(Star):
                     if not uin_str:
                         uin_str = str(self_id or "0")
                         logger.warning(f"Platform {platform_name} self_id '{self_id}' cannot be parsed as digits, using {uin_str} as fallback uin")
+                    try:
+                        uin_value = int(uin_str)
+                    except (TypeError, ValueError):
+                        uin_value = 10000
+                        logger.warning(f"Fallback uin_value=10000 for platform {platform_name} due to invalid uin_str: {uin_str}")
+                    else:
+                        if uin_value <= 0:
+                            uin_value = 10000
+                            logger.warning(f"Non-positive uin_value derived ({uin_str}); using fallback 10000")
                     
                     # 添加到节点列表
                     if i %29 ==0 :
                         nodes.append(
                             Comp.Node(
                                 name="AstrBot",
-                                uin=uin_str,
+                                uin=uin_value,
                                 content=[
                                     Comp.Plain(chapter_title)
                                 ]
@@ -316,7 +325,7 @@ class JmSender(Star):
                     nodes.append(
                         Comp.Node(
                             name="AstrBot",
-                            uin=uin_str,
+                            uin=uin_value,
                             content=[
                                 Comp.Plain(f"第 {i+1}/{len(image_files)} 页\n"),
                                 Comp.Image.fromFileSystem(img_path)
@@ -326,8 +335,8 @@ class JmSender(Star):
             
             # 如果是支持合并转发的平台且nodes不为空，则用合并转发发送
             if nodes:
-                # 每次最多发送30张图片，避免消息过大
-                batch_size = 30
+                # 每次最多发送30张图片，避免消息过大（部分平台限制更严格）
+                batch_size = 10 if platform_name == "aiocqhttp" else 30
                 for i in range(0, len(nodes), batch_size):
                     batch_nodes = nodes[i:i+batch_size]
                     if batch_nodes:
